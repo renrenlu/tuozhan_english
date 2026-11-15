@@ -9,11 +9,12 @@
 </head>
 <body>
 <noscript><p class="noscript">请用浏览器打开本在线页面，以使用互动按钮和声音。</p></noscript>
-<header><div class="headrow"><div><div class="eyebrow">LOOK · SPELL · REMEMBER</div><h1>手绘拼读小书房</h1><p>先拼字母，再读单词，最后读中文。<br>字母美式男声 · 单词、释义晓晓女声</p></div><div class="badge"><b>98</b>拓展词汇</div></div></header>
+<header><div class="headrow"><div><div class="eyebrow">LOOK · SPELL · REMEMBER</div><h1>手绘拼读小书房</h1><p id="readingOrder">先拼字母，再读单词，最后读中文。<br>字母美式男声 · 单词、释义晓晓女声</p></div><div class="badge"><b>98</b>拓展词汇</div></div></header>
 <main>
 <section class="tools" aria-label="学习设置">
 <label>范围 <select id="scope"><option value="all">全部 98 词</option><option value="1">第 1 页 · 1–17</option><option value="2">第 2 页 · 18–34</option><option value="3">第 3 页 · 35–51</option><option value="4">第 4 页 · 52–68</option><option value="5">第 5 页 · 69–84</option><option value="6">第 6 页 · 85–98</option><option value="star">★ 重点复习</option></select></label>
 <label>单词语速 <select id="speed"><option value="70" selected>70% 慢速</option><option value="80">80%</option><option value="85">85%</option><option value="95">95%</option><option value="100">100% 正常</option></select></label>
+<label><input type="checkbox" id="readLetters" checked>读字母</label>
 <label class="switch"><input type="checkbox" id="hideZh">遮住中文</label>
 </section>
 <section class="study" aria-label="当前单词">
@@ -33,6 +34,8 @@
 const BUNDLE=JSON.parse(document.getElementById('bundle').textContent),WORDS=BUNDLE.words,$=id=>document.getElementById(id);
 let selected=0,scopeList=[],stars=new Set(),epoch=0,source=null,context=null,running=false,paused=false,continuous=false,startedAt=0,currentTrack=null,currentSegment=-1,raf=null,pending=false;
 const audioCache=new Map(),trackCache=new Map();
+const LETTERS_KEY='renren-vocab-read-letters';
+try{$('readLetters').checked=localStorage.getItem(LETTERS_KEY)!=='false'}catch(_){}
 const STAR_KEY='renren-vocab-stars-by-word';
 try{const saved=localStorage.getItem(STAR_KEY);const names=saved?JSON.parse(saved):JSON.parse(localStorage.getItem('renren84-handdrawn-stars')||'[]').map(n=>BUNDLE.legacyWordByNumber[String(n)]).filter(Boolean);stars=new Set(WORDS.filter(w=>names.includes(w.w)).map(w=>w.n));localStorage.setItem(STAR_KEY,JSON.stringify(WORDS.filter(w=>stars.has(w.n)).map(w=>w.w)))}catch(_){}
 function list(){const scope=$('scope').value,q=$('search').value.trim().toLowerCase();return WORDS.filter((w,i)=>(scope==='all'||scope==='star'&&stars.has(w.n)||Number(scope)===w.page)&&(!q||w.w.toLowerCase().includes(q)||w.zh.includes(q))).map(w=>w.n-1)}
@@ -43,8 +46,8 @@ function drawWord(){const w=WORDS[selected];$('counter').textContent=`第 ${w.pa
 function audioContext(){if(!context){const C=window.AudioContext||window.webkitAudioContext;if(!C)throw new Error('当前浏览器无法播放内置音频');context=new C()}return context}
 function unlock(){if(navigator.audioSession)try{navigator.audioSession.type='playback'}catch(_){}return audioContext().resume()}
 async function decoded(key){if(audioCache.has(key))return audioCache.get(key);const encoded=BUNDLE.audio[key];if(!encoded)throw new Error('缺少音频：'+key);const promise=(async()=>{const response=await fetch(encoded);if(!response.ok)throw new Error('音频加载失败，请再点一次');const bytes=await response.arrayBuffer();return audioContext().decodeAudioData(bytes)})();audioCache.set(key,promise);try{return await promise}catch(e){audioCache.delete(key);throw e}}
-function partsFor(i,mode){const w=WORDS[i],speed=$('speed').value;if(mode==='word')return[{key:w.n+'_en_'+speed,kind:'word',text:w.w}];if(mode==='zh')return[{key:w.n+'_zh',kind:'zh',text:w.zh}];if(mode.startsWith('letter:')){let j=Number(mode.split(':')[1]);return[{key:'letter_'+w.w[j].toUpperCase()+'_100',kind:'letters',letter:j,text:w.w[j].toUpperCase()}]};return [...Array.from(w.w).map((c,j)=>({key:'letter_'+c.toUpperCase()+'_100',kind:'letters',letter:j,text:c.toUpperCase()})),{key:w.n+'_en_'+speed,kind:'word',text:w.w},{key:w.n+'_zh',kind:'zh',text:w.zh}]}
-async function trackFor(i,mode){const key=i+':'+mode+':'+$('speed').value;if(trackCache.has(key))return trackCache.get(key);const parts=partsFor(i,mode),buffers=await Promise.all(parts.map(p=>decoded(p.key))),sr=audioContext().sampleRate;let frames=0;const segments=[];for(let j=0;j<parts.length;j++){const p=parts[j],b=buffers[j],start=frames/sr;frames+=b.length;segments.push({...p,start,end:frames/sr});let gap=mode==='full'?(p.kind==='letters'?(j===parts.length-3 ? .46 : .19):p.kind==='word'?.6:1.1):.05;frames+=Math.round(gap*sr)}const buffer=audioContext().createBuffer(1,frames,sr);let offset=0;for(let j=0;j<parts.length;j++){const b=buffers[j];buffer.getChannelData(0).set(b.getChannelData(0),Math.round(segments[j].start*sr))}const t={buffer,segments};trackCache.set(key,t);if(trackCache.size>12)trackCache.delete(trackCache.keys().next().value);return t}
+function partsFor(i,mode){const w=WORDS[i],speed=$('speed').value;if(mode==='word')return[{key:w.n+'_en_'+speed,kind:'word',text:w.w}];if(mode==='zh')return[{key:w.n+'_zh',kind:'zh',text:w.zh}];if(mode.startsWith('letter:')){let j=Number(mode.split(':')[1]);return[{key:'letter_'+w.w[j].toUpperCase()+'_100',kind:'letters',letter:j,text:w.w[j].toUpperCase()}]};return [...($('readLetters').checked?Array.from(w.w).map((c,j)=>({key:'letter_'+c.toUpperCase()+'_100',kind:'letters',letter:j,text:c.toUpperCase()})):[]),{key:w.n+'_en_'+speed,kind:'word',text:w.w},{key:w.n+'_zh',kind:'zh',text:w.zh}]}
+async function trackFor(i,mode){const key=i+':'+mode+':'+$('speed').value+':'+$('readLetters').checked;if(trackCache.has(key))return trackCache.get(key);const parts=partsFor(i,mode),buffers=await Promise.all(parts.map(p=>decoded(p.key))),sr=audioContext().sampleRate;let frames=0;const segments=[];for(let j=0;j<parts.length;j++){const p=parts[j],b=buffers[j],start=frames/sr;frames+=b.length;segments.push({...p,start,end:frames/sr});let gap=mode==='full'?(p.kind==='letters'?(j===parts.length-3 ? .46 : .19):p.kind==='word'?.6:1.1):.05;frames+=Math.round(gap*sr)}const buffer=audioContext().createBuffer(1,frames,sr);let offset=0;for(let j=0;j<parts.length;j++){const b=buffers[j];buffer.getChannelData(0).set(b.getChannelData(0),Math.round(segments[j].start*sr))}const t={buffer,segments};trackCache.set(key,t);if(trackCache.size>12)trackCache.delete(trackCache.keys().next().value);return t}
 function syncButtons(){$('playAll').textContent=running?(continuous?'↻ 从本词重新读':'▶ 连续朗读'):'▶ 连续朗读';$('pause').hidden=!running;$('pause').textContent=paused?'继续':'暂停'}
 function stop(message){epoch++;running=false;paused=false;pending=false;continuous=false;if(source){source.onended=null;try{source.stop();source.disconnect()}catch(_){}source=null}if(raf)cancelAnimationFrame(raf);clearHighlight();syncButtons();if(message)$('status').textContent=message}
 function fail(e){stop('声音暂未启动，请再点一次朗读按钮。'+(e?.message?'（'+e.message+'）':''))}
@@ -63,10 +66,13 @@ $('grid').onclick=e=>{const b=e.target.closest('[data-select]');if(b){start(Numb
 function filter(){stop();drawGrid();if(scopeList.length&&!scopeList.includes(selected)){selected=scopeList[0];drawWord()}$('bar').style.width='0%';$('status').textContent=scopeList.length?'当前范围共 '+scopeList.length+' 个词，点击连续朗读开始。':'当前范围没有单词，请更换范围或搜索词。'}
 $('scope').onchange=filter;$('search').oninput=filter;
 $('speed').onchange=()=>{const wasRunning=running,wasAll=continuous;stop();if(wasRunning)start(selected,'full',wasAll);else $('status').textContent='单词语速已设为 '+$('speed').value+'%，字母固定 100%。'};
+function syncReadingMode(){const enabled=$('readLetters').checked;$('single').textContent=enabled?'♫ 完整拼读这一词':'♫ 朗读单词和释义';$('phaseLetters').hidden=!enabled;$('phaseWord').textContent=enabled?'② 读单词':'① 读单词';$('phaseZh').textContent=enabled?'③ 读释义':'② 读释义';$('phaseRest').textContent=enabled?'④ 跟着读':'③ 跟着读';$('readingOrder').firstChild.textContent=enabled?'先拼字母，再读单词，最后读中文。':'先读单词，再读中文。已关闭自动读字母。'}
+$('readLetters').onchange=()=>{const wasRunning=running,wasAll=continuous;stop();try{localStorage.setItem(LETTERS_KEY,String($('readLetters').checked))}catch(_){}syncReadingMode();$('bar').style.width='0%';$('progress').setAttribute('aria-valuenow','0');if(wasRunning)start(selected,'full',wasAll);else $('status').textContent=$('readLetters').checked?'已开启读字母：字母 → 单词 → 中文释义。':'已关闭读字母：单词 → 中文释义。仍可点单个字母听读音。'};
 $('hideZh').onchange=()=>{document.body.classList.toggle('hidden-zh',$('hideZh').checked);$('meaning').classList.remove('revealed')};
 $('star').onclick=()=>{const n=WORDS[selected].n;stars.has(n)?stars.delete(n):stars.add(n);try{localStorage.setItem(STAR_KEY,JSON.stringify(WORDS.filter(w=>stars.has(w.n)).map(w=>w.w)))}catch(_){}if($('scope').value==='star')filter();else drawGrid();drawWord()};
 $('zoom').onclick=()=>{$('largeImg').src=BUNDLE.images[selected];$('largeImg').alt=$('picture').alt;$('largeCaption').textContent=WORDS[selected].w+'  '+WORDS[selected].ipa;$('modal').showModal()};
 $('modal').onclick=e=>{if(e.target===$('modal')){const r=$('modal').getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)$('modal').close()}};
-window.addEventListener('pagehide',()=>stop());drawGrid();drawWord();
+window.addEventListener('pagehide',()=>stop());syncReadingMode();drawGrid();drawWord();
+if(!$('readLetters').checked)$('status').textContent='已关闭读字母，点击连续朗读：单词 → 中文释义。';
 </script>
 </body></html>
